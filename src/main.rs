@@ -63,7 +63,7 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
     let maxyear = folder
         .read_dir()
         .unwrap()
-        .map(|x| get_song_year(x))
+        .map(|x| get_song_year(x.unwrap()))
         .max()
         .unwrap_or_default();
 
@@ -76,8 +76,8 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
     return stays;
 }
 
-fn get_song_year(x: Result<DirEntry, Error>) -> i32 {
-    let path = x.unwrap().path();
+fn get_song_year(x: DirEntry) -> i32 {
+    let path = x.path();
     if !file_is_song(&path) {
         return 0;
     }
