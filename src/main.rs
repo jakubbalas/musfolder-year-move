@@ -1,6 +1,6 @@
-use fs_extra::dir;
+use fs_extra::{dir, file};
 use id3::{Tag, TagLike};
-use std::{fs::DirEntry, path::Path};
+use std::{fs::DirEntry, path::Path, io::Error};
 
 fn main() {
     println!("lets move some folders!");
@@ -17,7 +17,6 @@ fn movefolder(music_base: &Path) {
         if path.is_dir() && path.to_str().unwrap().contains("-q") {
             let mut bits = path.file_name().unwrap().to_str().unwrap().split("-");
             let genre = bits.nth(0).unwrap();
-            // let mut bits = path.file_name().unwrap().to_str().unwrap().split("-");
             let year = bits.nth(0).unwrap().parse::<i32>().unwrap();
             println!("genre: {:?}, year: {:?}", genre, year);
 
@@ -33,7 +32,7 @@ fn main_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) {
         if path.is_dir() {
             let _ = subfolder_move(&path, folder_year, genre, music_base);
         } else if file_is_song(&path) {
-            println!("moving song: {:?}", path); 
+            println!("moving song: {:?}", path);
         } else {
             println!("not moving: {:?}", path);
         }
@@ -49,6 +48,11 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
             if submove {
                 stays = true;
             }
+        } else if file_is_deletable(&path) {
+            println!("deleting file: {:?}", path);
+            // std::fs::remove_file(&path).unwrap();
+        } else if !file_is_song(&path) && !file_is_deletable(&path) {
+            println!("This got through cracks: {:?}", path)
         }
     });
 
@@ -72,7 +76,7 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
     return stays;
 }
 
-fn get_song_year(x: Result<DirEntry, std::io::Error>) -> i32 {
+fn get_song_year(x: Result<DirEntry, Error>) -> i32 {
     let path = x.unwrap().path();
     if !file_is_song(&path) {
         return 0;
@@ -95,7 +99,24 @@ fn file_is_song(path: &Path) -> bool {
     }
 }
 
-fn file_is_deletable(path: &Path) {}
+fn file_is_deletable(path: &Path) -> bool {
+    let filename = path.file_name().unwrap().to_str().unwrap();
+    match filename {
+        ".DS_Store" => return true,
+        _ => (),
+    };
+
+    let ext = path.extension().unwrap_or_default();
+    match ext.to_str().unwrap() {
+        "jpg" => true,
+        "jpeg" => true,
+        "png" => true,
+        "txt" => true,
+        "nfo" => true,
+        "m3u" => true,
+        _ => false,
+    }
+}
 
 #[cfg(test)]
 mod tests {
