@@ -1,6 +1,9 @@
 use fs_extra::{dir, file};
 use id3::{Tag, TagLike};
-use std::{fs::DirEntry, path::{Path, PathBuf}};
+use std::{
+    fs::DirEntry,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     println!("lets move some folders!");
@@ -75,7 +78,7 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
 
     if maxyear != *folder_year && stays != true {
         let basefolder = make_base_year_genre_folder(&maxyear, genre, music_base);
-        
+
         println!("moving folder: {:?} to {:?}", folder, basefolder);
         let options = fs_extra::dir::CopyOptions::new();
         let res = dir::move_dir(folder, basefolder, &options);
