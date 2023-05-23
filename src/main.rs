@@ -1,6 +1,6 @@
 use fs_extra::{dir, file};
 use id3::{Tag, TagLike};
-use std::{fs::DirEntry, path::Path, io::Error};
+use std::{fs::DirEntry, io::Error, path::Path};
 
 fn main() {
     println!("lets move some folders!");
@@ -36,6 +36,7 @@ fn main_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) {
         } else {
             println!("not moving: {:?}", path);
         }
+        remove_empty_folders(folder);
     });
 }
 
@@ -50,12 +51,13 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
             }
         } else if file_is_deletable(&path) {
             println!("deleting file: {:?}", path);
-            // std::fs::remove_file(&path).unwrap();
+            std::fs::remove_file(&path).unwrap();
         } else if !file_is_song(&path) && !file_is_deletable(&path) {
             println!("This got through cracks: {:?}", path)
         }
     });
 
+    remove_empty_folders(folder);
     if stays {
         return stays;
     }
@@ -74,6 +76,22 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
     if maxyear != *folder_year && stays != true {}
 
     return stays;
+}
+
+fn remove_empty_folders(folder: &Path) {
+    folder.read_dir().unwrap().for_each(|x| {
+        let subpath = x.unwrap().path();
+        if subpath.is_dir() {
+            let mut empty = true;
+            subpath.read_dir().unwrap().for_each(|_| {
+                empty = false;
+            });
+            if empty {
+                println!("deleting empty folder: {:?}", subpath);
+                std::fs::remove_dir(&subpath).unwrap();
+            }
+        }
+    });
 }
 
 fn get_song_year(x: DirEntry) -> i32 {
