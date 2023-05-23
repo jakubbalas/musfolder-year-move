@@ -1,6 +1,6 @@
 use fs_extra::{dir, file};
 use id3::{Tag, TagLike};
-use std::{fs::DirEntry, io::Error, path::Path};
+use std::{fs::DirEntry, path::{Path, PathBuf}};
 
 fn main() {
     println!("lets move some folders!");
@@ -28,6 +28,7 @@ fn movefolder(music_base: &Path) {
 
 fn main_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) {
     folder.read_dir().unwrap().for_each(|x| {
+        println!("checking main_move folder: {:?}", x);
         let path = x.unwrap().path();
         if path.is_dir() {
             let _ = subfolder_move(&path, folder_year, genre, music_base);
@@ -42,13 +43,12 @@ fn main_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) {
 
 fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) -> bool {
     let mut stays = false;
+    println!("checking subfolder_move folder: {:?}", folder);
+
     folder.read_dir().unwrap().for_each(|x| {
         let path = x.unwrap().path();
         if path.is_dir() {
-            let submove = subfolder_move(&path, folder_year, genre, music_base);
-            if submove {
-                stays = true;
-            }
+            stays = subfolder_move(&path, folder_year, genre, music_base);
         } else if file_is_deletable(&path) {
             println!("deleting file: {:?}", path);
             std::fs::remove_file(&path).unwrap();
@@ -73,9 +73,29 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
         return true;
     }
 
-    if maxyear != *folder_year && stays != true {}
+    if maxyear != *folder_year && stays != true {
+        let basefolder = make_base_year_genre_folder(&maxyear, genre, music_base);
+        
+        println!("moving folder: {:?} to {:?}", folder, basefolder);
+        let options = fs_extra::dir::CopyOptions::new();
+        let res = dir::move_dir(folder, basefolder, &options);
+        match res {
+            Ok(_) => (),
+            Err(e) => println!("error moving folder: {:?}", e),
+        }
+        return false;
+    } else {
+        return true;
+    }
+}
 
-    return stays;
+fn make_base_year_genre_folder(year: &i32, genre: &str, music_base: &Path) -> PathBuf {
+    let yearfolder = music_base.join(Path::new(&format!("{}-{}", genre, year)));
+    if !yearfolder.exists() {
+        dir::create(&yearfolder, true).unwrap();
+        println!("created folder: {:?}", yearfolder);
+    }
+    return yearfolder;
 }
 
 fn remove_empty_folders(folder: &Path) {
