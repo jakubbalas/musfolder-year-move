@@ -8,7 +8,7 @@ use std::{
 
 fn main() {
     println!("lets move some folders!");
-    let base = Path::new("tstfolder");
+    let base = Path::new("/Users/jbalas/Downloads/tstmusc");
     movefolder(base);
     println!("done!");
 }
@@ -74,6 +74,7 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
         .unwrap_or_default();
 
     if maxyear == 0 {
+        println!("No max year found in folder: {:?}", folder);
         return true;
     }
 
@@ -135,10 +136,18 @@ fn get_song_year(x: DirEntry) -> i32 {
         return 0;
     }
     let tag = Tag::read_from_path(&path.to_str().unwrap()).unwrap();
+    match tag.year() {
+        Some(year) => return year,
+        None => (),
+    }
+
     let yeartagopt = tag.get("TDRC").and_then(|frame| frame.content().text());
     match yeartagopt {
         Some(yeartag) => return yeartag.parse::<i32>().unwrap(),
-        None => return 0,
+        None => {
+            println!("no year tag found in file: {:?}", path);
+            return 0
+        },
     }
 }
 
