@@ -1,5 +1,6 @@
-use fs_extra::{dir, file};
+use fs_extra::dir;
 use id3::{Tag, TagLike};
+use rand::prelude::*;
 use std::{
     fs::DirEntry,
     path::{Path, PathBuf},
@@ -78,13 +79,24 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
 
     if maxyear != *folder_year && stays != true {
         let basefolder = make_base_year_genre_folder(&maxyear, genre, music_base);
-
         println!("moving folder: {:?} to {:?}", folder, basefolder);
         let options = fs_extra::dir::CopyOptions::new();
-        let res = dir::move_dir(folder, basefolder, &options);
+        let res = dir::move_dir(folder, basefolder.clone(), &options);
         match res {
             Ok(_) => (),
-            Err(e) => println!("error moving folder: {:?}", e),
+            Err(e) => {
+                let foldername = folder.file_name().unwrap();
+                let newpath = basefolder.join(Path::new(&format!(
+                    "{}-{}",
+                    foldername.to_str().unwrap(),
+                    random::<u32>()
+                )));
+                println!(
+                    "error moving folder: {:?}, trying with new name: {:?}",
+                    e, newpath
+                );
+                dir::create(&newpath, false).unwrap();
+            }
         }
         return false;
     } else {
@@ -95,7 +107,7 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
 fn make_base_year_genre_folder(year: &i32, genre: &str, music_base: &Path) -> PathBuf {
     let yearfolder = music_base.join(Path::new(&format!("{}-{}", genre, year)));
     if !yearfolder.exists() {
-        dir::create(&yearfolder, true).unwrap();
+        dir::create(&yearfolder, false).unwrap();
         println!("created folder: {:?}", yearfolder);
     }
     return yearfolder;
