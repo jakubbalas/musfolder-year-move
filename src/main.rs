@@ -1,10 +1,10 @@
-use fs_extra::dir;
+use fs_extra::dir::{self, create};
 use id3::{Tag, TagLike};
 use rand::prelude::*;
 use std::{
-    fs::DirEntry,
+    fs::{create_dir, rename, DirEntry},
+    io::stdin,
     path::{Path, PathBuf},
-    io::stdin
 };
 
 fn main() {
@@ -12,12 +12,12 @@ fn main() {
     let mut basepath = String::new();
     let stdin = stdin();
     stdin.read_line(&mut basepath).unwrap();
-    basepath = basepath.replace("\n", "").replace("\r","");
-    match basepath.to_lowercase().find("music"){
+    basepath = basepath.replace("\n", "").replace("\r", "");
+    match basepath.to_lowercase().find("music") {
         None => {
             println!("not a music folder, exiting");
             return;
-        },
+        }
         _ => (),
     }
     println!("Using music base: {:?}", basepath);
@@ -63,7 +63,7 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
 
     folder.read_dir().unwrap().for_each(|x| {
         let path = x.unwrap().path();
-        if path.is_dir() {
+        if path.is_dir() && path.read_dir().unwrap().into_iter().count() > 0 {
             stays = subfolder_move(&path, folder_year, genre, music_base);
         } else if file_is_deletable(&path) {
             println!("deleting file: {:?}", path);
@@ -74,6 +74,9 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
     });
 
     remove_empty_folders(folder);
+    if folder.read_dir().unwrap().into_iter().count() == 0 {
+        return false;
+    }
     if stays {
         return stays;
     }
@@ -90,34 +93,21 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
         return true;
     }
 
-    if maxyear != *folder_year && stays != true {
-        let basefolder = make_base_year_genre_folder(&maxyear, genre, music_base);
-        println!("moving folder: {:?} to {:?}", folder, basefolder);
-        let options = fs_extra::dir::CopyOptions::new();
-        let res = dir::move_dir(folder, basefolder.clone(), &options);
-        match res {
-            Ok(_) => (),
-            Err(e) => {
-                let foldername = folder.file_name().unwrap();
-                let newpath = basefolder.join(Path::new(&format!(
-                    "{}-{}",
-                    foldername.to_str().unwrap(),
-                    random::<u32>()
-                )));
-                println!(
-                    "error moving folder: {:?}, trying with new name: {:?}",
-                    e, newpath
-                );
-                dir::create(&newpath, false).unwrap();
-                let mut errmove_opts = fs_extra::dir::CopyOptions::new();
-                errmove_opts.content_only = true;
-                dir::move_dir(folder, newpath, &errmove_opts).unwrap();
-            }
-        }
-        return false;
-    } else {
+    if !(maxyear != *folder_year && stays != true) {
         return true;
     }
+
+    let basefolder = make_base_year_genre_folder(&maxyear, genre, music_base);
+    let mussize = folder.read_dir().unwrap().into_iter().count();
+    println!(
+        "moving folder: {:?} of size {:?} to {:?}",
+        folder, mussize, basefolder
+    );
+    let tst = basefolder.join(folder.file_name().unwrap());
+    println!("Checking existence of {:?}", tst);
+
+    safe_move_item(folder, basefolder.as_path());
+    return false;
 }
 
 fn make_base_year_genre_folder(year: &i32, genre: &str, music_base: &Path) -> PathBuf {
@@ -161,8 +151,8 @@ fn get_song_year(x: DirEntry) -> i32 {
         Some(yeartag) => return yeartag.parse::<i32>().unwrap(),
         None => {
             println!("no year tag found in file: {:?}", path);
-            return 0
-        },
+            return 0;
+        }
     }
 }
 
@@ -192,6 +182,32 @@ fn file_is_deletable(path: &Path) -> bool {
         "nfo" => true,
         "m3u" => true,
         _ => false,
+    }
+}
+
+fn safe_move_item(from: &Path, to: &Path) {
+    if !to.exists() {
+        panic!("Destination base folder doesn't exist")
+    }
+    if from.is_file() {
+        rename(from, to).unwrap();
+    }
+    if from.is_dir() {
+        let folder_name = from.file_name().unwrap();
+        let newpath = to.join(folder_name);
+        if newpath.exists() {
+            println!("Found duplicate for folder: {:?}", newpath);
+            let newpath = to.join(Path::new(&format!(
+                "{}-{}",
+                folder_name.to_str().unwrap(),
+                random::<u32>()
+            )));
+            create(&newpath, false).unwrap();
+            rename(from, &newpath).unwrap();
+        } else {
+            create(&newpath, false).unwrap();
+            rename(from, &newpath).unwrap();
+        }
     }
 }
 
