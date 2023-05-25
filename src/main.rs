@@ -109,6 +109,9 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
                     e, newpath
                 );
                 dir::create(&newpath, false).unwrap();
+                let mut errmove_opts = fs_extra::dir::CopyOptions::new();
+                errmove_opts.content_only = true;
+                dir::move_dir(folder, newpath, &errmove_opts).unwrap();
             }
         }
         return false;
