@@ -4,12 +4,24 @@ use rand::prelude::*;
 use std::{
     fs::DirEntry,
     path::{Path, PathBuf},
+    io::stdin
 };
 
 fn main() {
-    println!("lets move some folders!");
-    let base = Path::new("/Users/jbalas/Downloads/tstmusc");
-    movefolder(base);
+    println!("lets move some folders! Enter the base folder for music library");
+    let mut basepath = String::new();
+    let stdin = stdin();
+    stdin.read_line(&mut basepath).unwrap();
+    basepath = basepath.replace("\n", "").replace("\r","");
+    match basepath.to_lowercase().find("music"){
+        None => {
+            println!("not a music folder, exiting");
+            return;
+        },
+        _ => (),
+    }
+    println!("Using music base: {:?}", basepath);
+    movefolder(Path::new(&basepath));
     println!("done!");
 }
 
