@@ -30,20 +30,29 @@ fn main() -> Result<(),()> {
     let args: Vec<String> = env::args().collect();
 
     let mut client = Client::connect("host=localhost user=mmove password=mmove dbname=mmove", NoTls).unwrap();
-    step_load_files(&client);
+    step_load_files(&mut client);
+    step_load_years(&mut client);
     Ok(())
 }
 
-fn step_load_files(client: &Client) {
+fn step_load_files(client: &mut Client) {
     let mut basepath_input = String::new();
     let stdin = stdin();
     stdin.read_line(&mut basepath_input).unwrap();
+    let basepath_input = &basepath_input.replace("\n", "").replace("\r", "");
     println!("Now lets load some files into the database!");
-    let basepath = Path::new(&basepath_input.replace("\n", "").replace("\r", ""));
+    match basepath_input.to_lowercase().find("music") {
+        None => {
+            println!("not a music folder, exiting");
+            return;
+        }
+        _ => (),
+    }
+    let basepath = Path::new(basepath_input);
     base_folder_load(&basepath, client);
 }
 
-fn base_folder_load(music_base: &Path, client: &Client) {
+fn base_folder_load(music_base: &Path, client: &mut Client) {
     music_base.read_dir().unwrap().for_each(|x| {
         let x = x.unwrap();
         let path = x.path();
@@ -62,7 +71,7 @@ fn base_folder_load(music_base: &Path, client: &Client) {
     });    
 }
 
-fn folder_load(folder: &Path, base_folder_data: &TopFolder, depth_level: i8, client: &Client) {
+fn folder_load(folder: &Path, base_folder_data: &TopFolder, depth_level: i8, client: &mut Client) {
     folder.read_dir().unwrap().for_each(|x| {
         println!("checking main_move folder: {:?}", x);
         let path = x.unwrap().path();
@@ -71,61 +80,45 @@ fn folder_load(folder: &Path, base_folder_data: &TopFolder, depth_level: i8, cli
             let _ = folder_load(&path, base_folder_data, next_depth, client);
         } else if file_is_song(&path) && depth_level == 0{
             println!("moving song: {:?}", path);
-            let year: i32 = 0;
+            let year: i32 = 9999;
             client.execute(
                 "INSERT INTO foldermove (filepath, depth, year, moved, genre, currentyear, isdir) VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 &[&folder.to_str(), &depth_level, &year, &false, &base_folder_data.genre, &base_folder_data.year, &false],
-            );
+            ).unwrap();
         } else if file_is_deletable(&path){
             println!("not moving: {:?}", path);
             std::fs::remove_file(&path).unwrap();
         }
     });
     remove_empty_folders(folder);
-    let year: i32 = 0;
+    let year: i32 = 9999;
     client.execute(
         "INSERT INTO foldermove (filepath, depth, year, moved, genre, currentyear, isdir) VALUES ($1, $2, $3, $4, $5, $6, $7)",
         &[&folder.to_str(), &depth_level, &year, &false, &base_folder_data.genre, &base_folder_data.year, &true],
-    );
+    ).unwrap();
 }
 
-
-fn main_2() {
-    println!("lets move some folders! Enter the base folder for music library");
-    let mut basepath = String::new();
-    let stdin = stdin();
-    stdin.read_line(&mut basepath).unwrap();
-    basepath = basepath.replace("\n", "").replace("\r", "");
-    match basepath.to_lowercase().find("music") {
-        None => {
-            println!("not a music folder, exiting");
-            return;
+fn step_load_years(client: &mut Client) {
+    println!("Now lets load some years into the database!");
+    let query = "SELECT filepath FROM foldermove WHERE year = 9999";
+    let rows = client.query(query, &[]).unwrap();
+    let mut year = 0;
+    for row in rows {
+        let file_path_str : String = row.get(0);
+        let file_path = Path::new(&file_path_str);
+        if !file_path.exists() {
+            println!("file doesn't exist: {:?}", file_path);
+            continue;
+        } else if file_path.is_dir() {
+            year = get_song_year(file_path);
+            println!("file is a dir: {:?}", file_path);
+        } else {
+            year = get_song_year(&file_path);            
         }
-        _ => (),
+        let query = "UPDATE foldermove SET year = $1 WHERE filepath = $2";
+        client.execute(query, &[&year, &file_path_str]).unwrap();
     }
-    println!("Using music base: {:?}", basepath);
-    movefolder(Path::new(&basepath));
-    println!("done!");
 }
-
-fn movefolder(music_base: &Path) {
-    music_base.read_dir().unwrap().for_each(|x| {
-        let x = x.unwrap();
-        let path = x.path();
-
-        if path.is_dir() && path.to_str().unwrap().contains("-q") {
-            let mut bits = path.file_name().unwrap().to_str().unwrap().split("-");
-            let genre = bits.nth(0).unwrap();
-            let year = bits.nth(0).unwrap().parse::<i32>().unwrap();
-            println!("genre: {:?}, year: {:?}", genre, year);
-
-            println!("Going through a folder: {:?}", path);
-            main_move(&path, &year, &genre, &music_base);
-        }
-    });
-}
-
-
 
 fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) -> bool {
     let mut stays = false;
@@ -154,7 +147,7 @@ fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Pa
     let maxyear = folder
         .read_dir()
         .unwrap()
-        .map(|x| get_song_year(x.unwrap()))
+        .map(|x| get_song_year(&x.unwrap().path()))
         .max()
         .unwrap_or_default();
 
@@ -205,12 +198,11 @@ fn remove_empty_folders(folder: &Path) {
     });
 }
 
-fn get_song_year(x: DirEntry) -> i32 {
-    let path = x.path();
-    if !file_is_song(&path) {
+fn get_song_year(song_path: &Path) -> i32 {
+    if !file_is_song(&song_path) {
         return 0;
     }
-    let tag = Tag::read_from_path(&path.to_str().unwrap()).unwrap();
+    let tag = Tag::read_from_path(&song_path.to_str().unwrap()).unwrap();
     match tag.year() {
         Some(year) => return year,
         None => (),
@@ -220,7 +212,7 @@ fn get_song_year(x: DirEntry) -> i32 {
     match yeartagopt {
         Some(yeartag) => return yeartag.parse::<i32>().unwrap(),
         None => {
-            println!("no year tag found in file: {:?}", path);
+            println!("no year tag found in file: {:?}", song_path);
             return 0;
         }
     }
