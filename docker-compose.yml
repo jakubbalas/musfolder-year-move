@@ -1,0 +1,15 @@
+volumes:
+  pgdb:
+
+services:
+  pgdb:
+    image: "postgres:15-alpine"
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=mmove
+      - POSTGRES_PASSWORD=mmove
+      - POSTGRES_DB=mmove
+    volumes:
+      - pgdb:/var/lib/postgresql/data
+  

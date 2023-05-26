@@ -6,8 +6,91 @@ use std::{
     io::stdin,
     path::{Path, PathBuf},
 };
+use postgres::{Client, NoTls};
+use std::result::Result;
+use std::env;
 
-fn main() {
+struct MusicFile {
+    path_str: String,
+    filename: String,
+    year: i32,
+    genre: String,
+    correct: bool,
+    depth_level: i8,
+    colpath: String,
+}
+
+struct TopFolder {
+    year: i32,
+    genre: String,
+    colpath: String,
+}
+
+fn main() -> Result<(),()> {
+    let args: Vec<String> = env::args().collect();
+
+    let mut client = Client::connect("host=localhost user=mmove password=mmove dbname=mmove", NoTls).unwrap();
+    step_load_files(&client);
+    Ok(())
+}
+
+fn step_load_files(client: &Client) {
+    let mut basepath_input = String::new();
+    let stdin = stdin();
+    stdin.read_line(&mut basepath_input).unwrap();
+    println!("Now lets load some files into the database!");
+    let basepath = Path::new(&basepath_input.replace("\n", "").replace("\r", ""));
+    base_folder_load(&basepath, client);
+}
+
+fn base_folder_load(music_base: &Path, client: &Client) {
+    music_base.read_dir().unwrap().for_each(|x| {
+        let x = x.unwrap();
+        let path = x.path();
+
+        if path.is_dir() && path.to_str().unwrap().contains("-q") {
+            let mut bits = path.file_name().unwrap().to_str().unwrap().split("-");
+            let base_folder_data = TopFolder {
+                year: bits.nth(0).unwrap().parse::<i32>().unwrap(),
+                genre: bits.nth(0).unwrap().to_string(),
+                colpath: music_base.to_str().unwrap().to_string(),
+            };
+
+            println!("Going through a folder: {:?}", path);
+            folder_load(&path, &base_folder_data, 0, client);
+        }
+    });    
+}
+
+fn folder_load(folder: &Path, base_folder_data: &TopFolder, depth_level: i8, client: &Client) {
+    folder.read_dir().unwrap().for_each(|x| {
+        println!("checking main_move folder: {:?}", x);
+        let path = x.unwrap().path();
+        if path.is_dir() {
+            let next_depth = depth_level + 1;
+            let _ = folder_load(&path, base_folder_data, next_depth, client);
+        } else if file_is_song(&path) && depth_level == 0{
+            println!("moving song: {:?}", path);
+            let year: i32 = 0;
+            client.execute(
+                "INSERT INTO foldermove (filepath, depth, year, moved, genre, currentyear, isdir) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                &[&folder.to_str(), &depth_level, &year, &false, &base_folder_data.genre, &base_folder_data.year, &false],
+            );
+        } else if file_is_deletable(&path){
+            println!("not moving: {:?}", path);
+            std::fs::remove_file(&path).unwrap();
+        }
+    });
+    remove_empty_folders(folder);
+    let year: i32 = 0;
+    client.execute(
+        "INSERT INTO foldermove (filepath, depth, year, moved, genre, currentyear, isdir) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        &[&folder.to_str(), &depth_level, &year, &false, &base_folder_data.genre, &base_folder_data.year, &true],
+    );
+}
+
+
+fn main_2() {
     println!("lets move some folders! Enter the base folder for music library");
     let mut basepath = String::new();
     let stdin = stdin();
@@ -42,20 +125,7 @@ fn movefolder(music_base: &Path) {
     });
 }
 
-fn main_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) {
-    folder.read_dir().unwrap().for_each(|x| {
-        println!("checking main_move folder: {:?}", x);
-        let path = x.unwrap().path();
-        if path.is_dir() {
-            let _ = subfolder_move(&path, folder_year, genre, music_base);
-        } else if file_is_song(&path) {
-            println!("moving song: {:?}", path);
-        } else {
-            println!("not moving: {:?}", path);
-        }
-        remove_empty_folders(folder);
-    });
-}
+
 
 fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) -> bool {
     let mut stays = false;
