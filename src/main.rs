@@ -305,27 +305,27 @@ fn safe_move_item(from: &Path, to: &Path) -> Result<String, String>{
         let move_path = to.join(filename);
         if move_path.exists() {
             println!("Found duplicate for file: {:?}", move_path);
-            let randomized_name = to.join(Path::new(&format!(
+            let randomized_name = from.parent().unwrap().join(Path::new(&format!(
                 "{}-{}.{}",
                 from.file_stem().unwrap().to_str().unwrap(),
                 random::<u32>(),
                 from.extension().unwrap_or_default().to_str().unwrap()
             )));
-            let randomized_name = from.parent().unwrap().join(randomized_name);
+
             match rename(from, &randomized_name) {
                 Ok(_) => (),
                 Err(e) => return Err(format!("Something went wrong during file rename: {:?}", e).to_string()),
             };
             let mut copy_options = file::CopyOptions::new();
             copy_options.overwrite = false;
-            match file::move_file(&randomized_name, &move_path, &copy_options) {
+            match file::move_file(&randomized_name, &to.join(Path::new(&randomized_name.file_name().unwrap())), &copy_options) {
                 Ok(_) => return Ok(randomized_name.to_str().unwrap().to_string()),
-                Err(e) => return Err(format!("Something went wrong during file move: {:?}", e).to_string()),                
+                Err(e) => return Err(format!("Something went wrong during randomised file move: {:?}", e).to_string()),                
             };
         } else {
             let mut copy_options = file::CopyOptions::new();
             copy_options.overwrite = false;
-            match file::move_file(from, to, &copy_options) {
+            match file::move_file(from, to.join(from.file_name().unwrap()), &copy_options) {
                 Ok(_) => return Ok(from.to_str().unwrap().to_string()),
                 Err(e) => return Err(format!("Something went wrong during file move: {:?}", e).to_string()),                
             };
