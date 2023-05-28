@@ -1,4 +1,5 @@
 use fs_extra::dir::{self, create};
+use fs_extra::file;
 use id3::{Tag, TagLike};
 use postgres::{Client, NoTls};
 use rand::prelude::*;
@@ -6,20 +7,9 @@ use std::env;
 use std::result::Result;
 use log::{info, warn};
 use std::{
-    fs::{create_dir, rename, DirEntry},
-    io::stdin,
+    fs::rename,
     path::{Path, PathBuf},
 };
-
-struct MusicFile {
-    path_str: String,
-    filename: String,
-    year: i32,
-    genre: String,
-    correct: bool,
-    depth_level: i8,
-    colpath: String,
-}
 
 struct TopFolder {
     year: i32,
@@ -32,36 +22,37 @@ const YEAR_UNKNOWN : i32 = 0;
 const YEAR_ERR : i32 = 6666;
 
 fn main() -> Result<(), ()> {
-    let args: Vec<String> = env::args().collect();
-
     let mut client = Client::connect(
         "host=localhost user=mmove password=mmove dbname=mmove",
         NoTls,
     )
     .unwrap();
-    //step_load_files(&mut client);
-    step_load_years(&mut client);
-    Ok(())
-}
-
-fn step_load_files(client: &mut Client) {
-    let mut basepath_input = String::new();
-    let stdin = stdin();
-    stdin.read_line(&mut basepath_input).unwrap();
-    let basepath_input = &basepath_input.replace("\n", "").replace("\r", "");
-    println!("Now lets load some files into the database!");
-    match basepath_input.to_lowercase().find("music") {
+    let args: Vec<String> = env::args().collect();
+    let collection_path_str = &args[0];
+    match collection_path_str.to_lowercase().find("music") {
         None => {
             println!("not a music folder, exiting");
-            return;
+            return Ok(());
         }
         _ => (),
     }
-    let basepath = Path::new(basepath_input);
-    base_folder_load(&basepath, client);
+    let collection_path = Path::new(collection_path_str);
+    if !collection_path.exists(){
+        println!("Base folder does not exist.");
+        return Err(());
+    }
+
+    if args.iter().any(|i| i == "--load-folders") {
+        step_load_files(collection_path, &mut client);
+    } 
+    step_load_years(collection_path_str, &mut client);
+    step_create_year_genre_folders(collection_path_str, &mut client);
+    step_move_items(collection_path_str, &mut client);
+    Ok(())
 }
 
-fn base_folder_load(music_base: &Path, client: &mut Client) {
+
+fn step_load_files(music_base: &Path, client: &mut Client) {
     music_base.read_dir().unwrap().for_each(|x| {
         let x = x.unwrap();
         let path = x.path();
@@ -107,11 +98,11 @@ fn folder_load(folder: &Path, base_folder_data: &TopFolder, depth_level: i32, cl
     ).unwrap();
 }
 
-fn step_load_years(client: &mut Client) {
+fn step_load_years(col_path: &String, client: &mut Client) {
     println!("Now lets load some years into the database!");
-    let query = "SELECT filepath FROM foldermove WHERE year = $1";
-    let rows = client.query(query, &[&YEAR_INIT]).unwrap();
-    let mut year = 0;
+    let query = "SELECT filepath FROM foldermove WHERE year = $1 and collection_base = $2";
+    let rows = client.query(query, &[&YEAR_INIT, &col_path]).unwrap();
+    let mut year;
     for row in rows {
         let file_path_str: String = row.get(0);
         let file_path = Path::new(&file_path_str);
@@ -128,89 +119,54 @@ fn step_load_years(client: &mut Client) {
     }
 }
 
-fn step_create_year_genre_folders(client: &mut Client) {
-    let q = "SELECT year, genre FROM foldermove WHERE moved = False AND year BETWEEN 1800 AND 2500 AND currentyear != year GROUP BY year, genre";
-    let rows = client.query(q, &[]).unwrap();
+fn step_create_year_genre_folders(collection_base: &String, client: &mut Client) {
+    let q = "SELECT year, genre, collection_base FROM foldermove WHERE moved = False AND year BETWEEN 1800 AND 2500 AND currentyear != year AND collection_base=$1 GROUP BY year, genre, collection_base;";
+    let rows = client.query(q, &[&collection_base]).unwrap();
     for row in rows {
         let year: i32 = row.get(0);
         let genre: String = row.get(1);
-        let mut genre_path = PathBuf::from("/home/mmove/Music");
-        genre_path.push(&genre);
-        let mut year_path = genre_path.clone();
-        year_path.push(&year.to_string());
-        if !year_path.exists() {
-            std::fs::create_dir_all(&year_path).unwrap();
-        }
-        let query = "UPDATE foldermove SET moved = True WHERE year = $1 AND genre = $2";
-        client.execute(query, &[&year, &genre]).unwrap();
+        let collection_path_str: String = row.get(2);
+        let collection_path = Path::new(&collection_path_str);
+        make_base_year_genre_folder(&genre, &year, &collection_path);
     }
 }
 
-fn step_move_items(client: &mut Client) {
+fn step_move_items(collection_base: &String, client: &mut Client) {
     println!("Running step of the move");
-    let query = " ";
-}
-
-fn subfolder_move(folder: &Path, folder_year: &i32, genre: &str, music_base: &Path) -> bool {
-    let mut stays = false;
-    println!("checking subfolder_move folder: {:?}", folder);
-
-    folder.read_dir().unwrap().for_each(|x| {
-        let path = x.unwrap().path();
-        if path.is_dir() && path.read_dir().unwrap().into_iter().count() > 0 {
-            stays = subfolder_move(&path, folder_year, genre, music_base);
-        } else if file_is_deletable(&path) {
-            println!("deleting file: {:?}", path);
-            std::fs::remove_file(&path).unwrap();
-        } else if !file_is_song(&path) && !file_is_deletable(&path) {
-            println!("This got through cracks: {:?}", path)
+    let q = "SELECT filepath, year, genre, collection_base FROM foldermove WHERE moved = False AND year between 1 and 3000 and currentyear != year collection_base=$1 order by depth desc;";
+    let rows = client.query(q, &[&collection_base]).unwrap();
+    for row in rows{
+        let itempath: String = row.get(0);
+        let item = Path::new(&itempath);
+        let year: i32 = row.get(1);
+        let genre: String = row.get(2);
+        let collection_base_path: String = row.get(3);
+        if !item.exists() {
+            warn!("File doesn't exist: {:?}", item);
+            continue
         }
-    });
-
-    remove_empty_folders(folder);
-    if folder.read_dir().unwrap().into_iter().count() == 0 {
-        return false;
+        let genrefolder = construct_genre_year_folder(&genre, &year, Path::new(&collection_base_path));
+        match safe_move_item(item, &genrefolder) {
+            Ok(_) => {
+                let u = "UPDATE foldermove SET moved = True WHERE filepath = $1;";
+                client.execute(u, &[&itempath]).unwrap();        
+            },
+            Err(e) => println!("{:?}", e),
+        };
     }
-    if stays {
-        return stays;
-    }
-
-    let maxyear = folder
-        .read_dir()
-        .unwrap()
-        .map(|x| get_song_year(&x.unwrap().path()))
-        .max()
-        .unwrap_or_default();
-
-    if maxyear == 0 {
-        println!("No max year found in folder: {:?}", folder);
-        return true;
-    }
-
-    if !(maxyear != *folder_year && stays != true) {
-        return true;
-    }
-
-    let basefolder = make_base_year_genre_folder(&maxyear, genre, music_base);
-    let mussize = folder.read_dir().unwrap().into_iter().count();
-    println!(
-        "moving folder: {:?} of size {:?} to {:?}",
-        folder, mussize, basefolder
-    );
-    let tst = basefolder.join(folder.file_name().unwrap());
-    println!("Checking existence of {:?}", tst);
-
-    safe_move_item(folder, basefolder.as_path());
-    return false;
 }
 
-fn make_base_year_genre_folder(year: &i32, genre: &str, music_base: &Path) -> PathBuf {
-    let yearfolder = music_base.join(Path::new(&format!("{}-{}", genre, year)));
+fn make_base_year_genre_folder(genre: &str, year: &i32, music_base: &Path) -> PathBuf {
+    let yearfolder = construct_genre_year_folder(genre, year, music_base);
     if !yearfolder.exists() {
         dir::create(&yearfolder, false).unwrap();
         println!("created folder: {:?}", yearfolder);
     }
     return yearfolder;
+}
+
+fn construct_genre_year_folder(genre: &str, year: &i32, base: &Path) -> PathBuf {
+    base.join(Path::new(&format!("{}-{}", genre, year)))
 }
 
 fn remove_empty_folders(folder: &Path) {
@@ -250,7 +206,7 @@ fn get_song_year(song_path: &Path) -> i32 {
         Ok(_) => (),
         Err(_) => {
             println!("no tag found in file: {:?}", song_path);
-            return 0;
+            return YEAR_UNKNOWN;
         }        
     }
     let tag = tag_read.unwrap();
@@ -263,14 +219,14 @@ fn get_song_year(song_path: &Path) -> i32 {
     match yeartagopt {
         Some(yeartag) => {
             if yeartag.contains("-") {
-                
+                return yeartag.split("-").next().unwrap().parse::<i32>().unwrap()    
+            } else{
+                return yeartag.parse::<i32>().unwrap();
             }
-            println!("found year tag: {:?}", yeartag);
-            return yeartag.parse::<i32>().unwrap()
         },
         None => {
             println!("no year tag found in file: {:?}", song_path);
-            return 0;
+            return YEAR_UNKNOWN;
         }
     }
 }
@@ -304,31 +260,61 @@ fn file_is_deletable(path: &Path) -> bool {
     }
 }
 
-fn safe_move_item(from: &Path, to: &Path) {
+fn safe_move_item(from: &Path, to: &Path) -> Result<String, String>{
     if !to.exists() {
         panic!("Destination base folder doesn't exist")
     }
-    if from.is_file() {
-        rename(from, to).unwrap();
-    }
     if from.is_dir() {
         let folder_name = from.file_name().unwrap();
-        let newpath = to.join(folder_name);
-        if newpath.exists() {
-            println!("Found duplicate for folder: {:?}", newpath);
-            let newpath = to.join(Path::new(&format!(
+        let mut move_path = to.join(folder_name);
+        
+        if move_path.exists() {
+            println!("Found duplicate for folder: {:?}", move_path);
+            let randomized_path = to.join(Path::new(&format!(
                 "{}-{}",
                 folder_name.to_str().unwrap(),
                 random::<u32>()
             )));
-            create(&newpath, false).unwrap();
-            rename(from, &newpath).unwrap();
+            move_path = randomized_path;
+        }
+        create(&move_path, false).unwrap();
+        match rename(from, &move_path) {
+            Ok(_) => return Ok(move_path.to_str().unwrap().to_string()),
+            Err(e) => return Err(format!("Something went wrong during folder rename: {:?}", e).to_string()),
+        };
+    } else {
+        let filename = from.file_name().unwrap();
+        let move_path = to.join(filename);
+        if move_path.exists() {
+            println!("Found duplicate for file: {:?}", move_path);
+            let randomized_name = to.join(Path::new(&format!(
+                "{}-{}.{}",
+                from.file_stem().unwrap().to_str().unwrap(),
+                random::<u32>(),
+                from.extension().unwrap_or_default().to_str().unwrap()
+            )));
+            let randomized_name = from.parent().unwrap().join(randomized_name);
+            match rename(from, &randomized_name) {
+                Ok(_) => (),
+                Err(e) => return Err(format!("Something went wrong during file rename: {:?}", e).to_string()),
+            };
+            let mut copy_options = file::CopyOptions::new();
+            copy_options.overwrite = false;
+            match file::move_file(&randomized_name, &move_path, &copy_options) {
+                Ok(_) => return Ok(randomized_name.to_str().unwrap().to_string()),
+                Err(e) => return Err(format!("Something went wrong during file move: {:?}", e).to_string()),                
+            };
         } else {
-            create(&newpath, false).unwrap();
-            rename(from, &newpath).unwrap();
+            let mut copy_options = file::CopyOptions::new();
+            copy_options.overwrite = false;
+            match file::move_file(from, to, &copy_options) {
+                Ok(_) => return Ok(from.to_str().unwrap().to_string()),
+                Err(e) => return Err(format!("Something went wrong during file move: {:?}", e).to_string()),                
+            };
         }
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -336,7 +322,8 @@ mod tests {
 
     #[test]
     fn movingfolder() {
-        let base = Path::new("tstfolder");
+        let base_name = "tstfolder".to_string();
+        let base = Path::new(&base_name);
         let origin = base.join(Path::new("origin"));
         assert!(origin.exists());
         let newtest = base.join(Path::new("testres"));
@@ -350,8 +337,10 @@ mod tests {
             NoTls,
         )
         .unwrap();
-        base_folder_load(&basemus, &mut client);
-        step_load_years(&mut client);
+        step_load_files(&basemus, &mut client);
+        step_load_years(&base_name, &mut client);
+        step_create_year_genre_folders(&base_name, &mut client);
+        step_move_items(&base_name, &mut client);
         assert!(newtest.exists());
     }
 }
