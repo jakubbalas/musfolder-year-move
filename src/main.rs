@@ -133,7 +133,7 @@ fn step_create_year_genre_folders(collection_base: &String, client: &mut Client)
 
 fn step_move_items(collection_base: &String, client: &mut Client) {
     println!("Running step of the move");
-    let q = "SELECT filepath, year, genre, collection_base FROM foldermove WHERE moved = False AND year between 1 and 3000 and currentyear != year collection_base=$1 order by depth desc;";
+    let q = "SELECT filepath, year, genre, collection_base FROM foldermove WHERE moved = False AND year between 1 and 3000 and currentyear != year AND collection_base=$1 order by depth desc;";
     let rows = client.query(q, &[&collection_base]).unwrap();
     for row in rows{
         let itempath: String = row.get(0);
@@ -144,6 +144,20 @@ fn step_move_items(collection_base: &String, client: &mut Client) {
         if !item.exists() {
             warn!("File doesn't exist: {:?}", item);
             continue
+        };
+        if item.is_dir() {
+            remove_empty_folders(item);
+            let mut can_be_moved = true;
+            item.read_dir().unwrap().for_each(|x| {
+                let x = x.unwrap();
+                let path = x.path();
+                if path.is_dir() {
+                    can_be_moved = false;
+                }
+            });
+            if !can_be_moved {
+                continue;
+            }
         }
         let genrefolder = construct_genre_year_folder(&genre, &year, Path::new(&collection_base_path));
         match safe_move_item(item, &genrefolder) {
@@ -218,7 +232,11 @@ fn get_song_year(song_path: &Path) -> i32 {
     let yeartagopt = tag.get("TDRC").and_then(|frame| frame.content().text());
     match yeartagopt {
         Some(yeartag) => {
-            if yeartag.contains("-") {
+            if yeartag.matches("-").count() > 0 && yeartag.matches("-").count() != 2{
+                return YEAR_UNKNOWN;
+            }
+            else if yeartag.contains("-") {
+                println!("{:?}", yeartag);
                 return yeartag.split("-").next().unwrap().parse::<i32>().unwrap()    
             } else{
                 return yeartag.parse::<i32>().unwrap();
@@ -338,9 +356,10 @@ mod tests {
         )
         .unwrap();
         step_load_files(&basemus, &mut client);
-        step_load_years(&base_name, &mut client);
-        step_create_year_genre_folders(&base_name, &mut client);
-        step_move_items(&base_name, &mut client);
+        let col_id = "tstfolder/testres/origin".to_string();
+        step_load_years(&col_id, &mut client);
+        step_create_year_genre_folders(&col_id, &mut client);
+        step_move_items(&col_id, &mut client);
         assert!(newtest.exists());
     }
 }
