@@ -28,10 +28,10 @@ fn main() -> Result<(), ()> {
     )
     .unwrap();
     let args: Vec<String> = env::args().collect();
-    let collection_path_str = &args[0];
+    let collection_path_str = &args[1];
     match collection_path_str.to_lowercase().find("music") {
         None => {
-            println!("not a music folder, exiting");
+            println!("{:?} is not a music folder, exiting", collection_path_str);
             return Ok(());
         }
         _ => (),
