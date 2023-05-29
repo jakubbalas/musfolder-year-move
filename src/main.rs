@@ -1,11 +1,11 @@
 use fs_extra::dir::{self, create};
 use fs_extra::file;
 use id3::{Tag, TagLike};
+use log::{info, warn};
 use postgres::{Client, NoTls};
 use rand::prelude::*;
 use std::env;
 use std::result::Result;
-use log::{info, warn};
 use std::{
     fs::rename,
     path::{Path, PathBuf},
@@ -17,9 +17,9 @@ struct TopFolder {
     colpath: String,
 }
 
-const YEAR_INIT : i32 = 9999;
-const YEAR_UNKNOWN : i32 = 0;
-const YEAR_ERR : i32 = 6666;
+const YEAR_INIT: i32 = 9999;
+const YEAR_UNKNOWN: i32 = 0;
+const YEAR_ERR: i32 = 6666;
 
 fn main() -> Result<(), ()> {
     let mut client = Client::connect(
@@ -37,20 +37,19 @@ fn main() -> Result<(), ()> {
         _ => (),
     }
     let collection_path = Path::new(collection_path_str);
-    if !collection_path.exists(){
+    if !collection_path.exists() {
         println!("Base folder does not exist.");
         return Err(());
     }
 
     if args.iter().any(|i| i == "--load-folders") {
         step_load_files(collection_path, &mut client);
-    } 
+    }
     step_load_years(collection_path_str, &mut client);
     step_create_year_genre_folders(collection_path_str, &mut client);
     step_move_items(collection_path_str, &mut client);
     Ok(())
 }
-
 
 fn step_load_files(music_base: &Path, client: &mut Client) {
     music_base.read_dir().unwrap().for_each(|x| {
@@ -135,7 +134,7 @@ fn step_move_items(collection_base: &String, client: &mut Client) {
     println!("Running step of the move");
     let q = "SELECT filepath, year, genre, collection_base FROM foldermove WHERE moved = False AND year between 1 and 3000 and currentyear != year AND collection_base=$1 order by depth desc;";
     let rows = client.query(q, &[&collection_base]).unwrap();
-    for row in rows{
+    for row in rows {
         let itempath: String = row.get(0);
         let item = Path::new(&itempath);
         let year: i32 = row.get(1);
@@ -143,7 +142,7 @@ fn step_move_items(collection_base: &String, client: &mut Client) {
         let collection_base_path: String = row.get(3);
         if !item.exists() {
             warn!("File doesn't exist: {:?}", item);
-            continue
+            continue;
         };
         if item.is_dir() {
             remove_empty_folders(item);
@@ -159,12 +158,13 @@ fn step_move_items(collection_base: &String, client: &mut Client) {
                 continue;
             }
         }
-        let genrefolder = construct_genre_year_folder(&genre, &year, Path::new(&collection_base_path));
+        let genrefolder =
+            construct_genre_year_folder(&genre, &year, Path::new(&collection_base_path));
         match safe_move_item(item, &genrefolder) {
             Ok(_) => {
                 let u = "UPDATE foldermove SET moved = True WHERE filepath = $1;";
-                client.execute(u, &[&itempath]).unwrap();        
-            },
+                client.execute(u, &[&itempath]).unwrap();
+            }
             Err(e) => println!("{:?}", e),
         };
     }
@@ -195,7 +195,7 @@ fn remove_empty_folders(folder: &Path) {
                 println!("deleting empty folder: {:?}", subpath);
                 match std::fs::remove_dir(&subpath) {
                     Ok(_) => info!("Deleted folder: {:?}", subpath),
-                    Err(_) => warn!("Couldn't delete folder: {:?}", subpath)
+                    Err(_) => warn!("Couldn't delete folder: {:?}", subpath),
                 }
             }
         }
@@ -208,7 +208,7 @@ fn get_folder_year(folder_path: &Path) -> i32 {
         .unwrap()
         .map(|x| get_song_year(&x.unwrap().path()))
         .max()
-        .unwrap_or_default()  
+        .unwrap_or_default()
 }
 
 fn get_song_year(song_path: &Path) -> i32 {
@@ -221,7 +221,7 @@ fn get_song_year(song_path: &Path) -> i32 {
         Err(_) => {
             println!("no tag found in file: {:?}", song_path);
             return YEAR_UNKNOWN;
-        }        
+        }
     }
     let tag = tag_read.unwrap();
     match tag.year() {
@@ -232,16 +232,15 @@ fn get_song_year(song_path: &Path) -> i32 {
     let yeartagopt = tag.get("TDRC").and_then(|frame| frame.content().text());
     match yeartagopt {
         Some(yeartag) => {
-            if yeartag.matches("-").count() > 0 && yeartag.matches("-").count() != 2{
+            if yeartag.matches("-").count() > 0 && yeartag.matches("-").count() != 2 {
                 return YEAR_UNKNOWN;
-            }
-            else if yeartag.contains("-") {
+            } else if yeartag.contains("-") {
                 println!("{:?}", yeartag);
-                return yeartag.split("-").next().unwrap().parse::<i32>().unwrap()    
-            } else{
+                return yeartag.split("-").next().unwrap().parse::<i32>().unwrap();
+            } else {
                 return yeartag.parse::<i32>().unwrap();
             }
-        },
+        }
         None => {
             println!("no year tag found in file: {:?}", song_path);
             return YEAR_UNKNOWN;
@@ -278,14 +277,14 @@ fn file_is_deletable(path: &Path) -> bool {
     }
 }
 
-fn safe_move_item(from: &Path, to: &Path) -> Result<String, String>{
+fn safe_move_item(from: &Path, to: &Path) -> Result<String, String> {
     if !to.exists() {
         panic!("Destination base folder doesn't exist")
     }
     if from.is_dir() {
         let folder_name = from.file_name().unwrap();
         let mut move_path = to.join(folder_name);
-        
+
         if move_path.exists() {
             println!("Found duplicate for folder: {:?}", move_path);
             let randomized_path = to.join(Path::new(&format!(
@@ -298,7 +297,11 @@ fn safe_move_item(from: &Path, to: &Path) -> Result<String, String>{
         create(&move_path, false).unwrap();
         match rename(from, &move_path) {
             Ok(_) => return Ok(move_path.to_str().unwrap().to_string()),
-            Err(e) => return Err(format!("Something went wrong during folder rename: {:?}", e).to_string()),
+            Err(e) => {
+                return Err(
+                    format!("Something went wrong during folder rename: {:?}", e).to_string(),
+                )
+            }
         };
     } else {
         let filename = from.file_name().unwrap();
@@ -314,25 +317,42 @@ fn safe_move_item(from: &Path, to: &Path) -> Result<String, String>{
 
             match rename(from, &randomized_name) {
                 Ok(_) => (),
-                Err(e) => return Err(format!("Something went wrong during file rename: {:?}", e).to_string()),
+                Err(e) => {
+                    return Err(
+                        format!("Something went wrong during file rename: {:?}", e).to_string()
+                    )
+                }
             };
             let mut copy_options = file::CopyOptions::new();
             copy_options.overwrite = false;
-            match file::move_file(&randomized_name, &to.join(Path::new(&randomized_name.file_name().unwrap())), &copy_options) {
+            match file::move_file(
+                &randomized_name,
+                &to.join(Path::new(&randomized_name.file_name().unwrap())),
+                &copy_options,
+            ) {
                 Ok(_) => return Ok(randomized_name.to_str().unwrap().to_string()),
-                Err(e) => return Err(format!("Something went wrong during randomised file move: {:?}", e).to_string()),                
+                Err(e) => {
+                    return Err(format!(
+                        "Something went wrong during randomised file move: {:?}",
+                        e
+                    )
+                    .to_string())
+                }
             };
         } else {
             let mut copy_options = file::CopyOptions::new();
             copy_options.overwrite = false;
             match file::move_file(from, to.join(from.file_name().unwrap()), &copy_options) {
                 Ok(_) => return Ok(from.to_str().unwrap().to_string()),
-                Err(e) => return Err(format!("Something went wrong during file move: {:?}", e).to_string()),                
+                Err(e) => {
+                    return Err(
+                        format!("Something went wrong during file move: {:?}", e).to_string()
+                    )
+                }
             };
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
